@@ -1,105 +1,109 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
-
   outputs = {
     self,
+    flake-utils,
     nixpkgs,
+    ...
   }: let
+    mkDevkit = pkgs: {
+      name,
+      src,
+      includePaths ? [],
+    }:
+      pkgs.stdenv.mkDerivation (finalAttrs: {
+        inherit name;
 
-    pkgs = import nixpkgs { system = "x86_64-linux"; };
-    devkitarm-img = pkgs.dockerTools.pullImage {
-      imageName = "devkitpro/devkitarm";
-      imageDigest = "sha256:2ee5e6ecdc768aa7fb8f2e37be2e27ce33299e081caac20a0a2675cdc791cf32";
-      sha256 = "sha256-KUiKhA3QhMR9cIQC82FI0AgE+Ud7dAXY50xSn5oWZzI=";
-      finalImageName = "devkitpro/devkitarm";
-      finalImageTag = "20240202";
-    };
+        src = pkgs.dockerTools.pullImage (pkgs.lib.importJSON src);
 
-    libctrpf-img = pkgs.dockerTools.pullImage {
-      imageName = "pablomk7/libctrpf";
-      imageDigest = "sha256:710dd1dede64b599423cae413f2da88a00433578949467ea5680f572525481c2";
-      sha256 = "sha256-z3qvI9dTG3HzI6HYPzLmLOq1ISh5XxSMnlL81qZCMTs=";
-      finalImageName = "pablomk7/libctrpf";
-      finalImageTag = "0.7.4";
-    };
+        nativeBuildInputs = with pkgs; [autoPatchelfHook];
 
-    extractDocker = image: dir:
-      pkgs.vmTools.runInLinuxVM (
-        pkgs.runCommand "docker-preload-image" {
-          memSize = 8 * 1024;
-          buildInputs = with pkgs; [
-            curl
-            kmod
-            docker
-            e2fsprogs
-            utillinux
-          ];
-        }
-        ''
-          modprobe overlay
+        phases = ["buildPhase" "fixupPhase"];
 
-          # from https://github.com/tianon/cgroupfs-mount/blob/master/cgroupfs-mount
-          mount -t tmpfs -o uid=0,gid=0,mode=0755 cgroup /sys/fs/cgroup
-          cd /sys/fs/cgroup
-          for sys in $(awk '!/^#/ { if ($4 == 1) print $1 }' /proc/cgroups); do
-            mkdir -p $sys
-            if ! mountpoint -q $sys; then
-              if ! mount -n -t cgroup -o $sys cgroup $sys; then
-                rmdir $sys || true
-              fi
-            fi
+        buildPhase = ''
+          tar -xf $src
+
+          for archive in $(find *.tar)
+          do
+            tar -xf $archive
           done
 
-          dockerd -H tcp://127.0.0.1:5555 -H unix:///var/run/docker.sock &
+          mkdir -p $out
+          cp -r opt $out/opt
+          ln -sf $out/opt/devkitpro/tools/bin $out/bin
+        '';
 
-          until $(curl --output /dev/null --silent --connect-timeout 2 http://127.0.0.1:5555); do
-            printf '.'
-            sleep 1
+        fixupPhase = let
+          libPath = pkgs.lib.makeLibraryPath (with pkgs; [
+            stdenv.cc.cc.lib
+          ]);
+        in ''
+          for bin in $(find $out -executable -follow -type f)
+          do
+            file $bin | grep "ELF" && patchelf \
+              --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
+              --set-rpath "${libPath}" \
+              $bin || continue
           done
+        '';
 
-          echo load image
-          docker load -i ${image}
+        passthru = rec {
+          CPATH = pkgs.lib.makeSearchPath "include" (builtins.map (x: "${finalAttrs.finalPackage}/opt/devkitpro/${x}") includePaths);
 
-          echo run image
-          docker run ${image.destNameTag} tar -C '${toString dir}' -c . | tar -xv --no-same-owner -C $out || true
+          shellHook = ''
+            export DEVKITPRO="${finalAttrs.finalPackage}/opt/devkitpro"
+            export DEVKITARM="$DEVKITPRO/devkitARM"
+            export CPATH=${CPATH}
+          '';
+        };
+      });
 
-          echo end
-          kill %1
-        ''
-      );
-  in {
-
-    packages.x86_64-linux.devkitARM = pkgs.stdenv.mkDerivation {
-      name = "devkitARM";
-      src = extractDocker devkitarm-img "/opt/devkitpro";
-      nativeBuildInputs = [pkgs.autoPatchelfHook];
-      buildInputs = with pkgs; [
-        stdenv.cc.cc
-        ncurses6
-        zsnes
-      ];
-      buildPhase = "true";
-      installPhase = ''
-        mkdir -p $out
-        cp -r $src/{devkitARM,libgba,libnds,libctru,libmirko,liborcus,portlibs,tools} $out
-        rm -rf $out/pacman
-      '';
+    packages = pkgs: {
+      devkitARM = mkDevkit pkgs {
+        name = "devkitARM";
+        src = ./sources/devkitarm.json;
+        includePaths = [
+          "devkitARM"
+          "devkitARM/arm-none-eabi"
+          "libctru"
+          "libgba"
+          "libmirko"
+          "libnds"
+          "liborcus"
+          "libtonc"
+          "portlibs/3ds"
+          "portlibs/armv4t"
+          "portlibs/gba"
+          "portlibs/gp2x"
+          "portlibs/nds"
+        ];
+      };
     };
-
-    packages.x86_64-linux.libctrpf = pkgs.stdenv.mkDerivation {
+    packages = pkgs: {
+    libctrpf = mkDevkit pkgs {
       name = "libctrpf";
-      src = extractDocker libctrpf-img "/opt/devkitpro";
-      nativeBuildInputs = [  ];
-      buildInputs = with pkgs; [
+      src = ./sources/libctrpf.json;
+      includePaths = [
+        "libctrpf/include"
       ];
-      buildPhase = "true";
-      installPhase = ''
-        mkdir -p $out
-        cp -r $src/{libctrpf,tools} $out
-        rm -rf $out/pacman
-      '';
     };
   };
+  in
+    (flake-utils.lib.eachDefaultSystem (system: let
+      pkgs' = nixpkgs.legacyPackages.${system};
+    in {
+      packages = {
+        inherit (packages pkgs') devkitARM libctrpf;
+      };
+    }))
+    // {
+      overlays.default = final: prev: {
+        devkitNix = {
+          inherit (packages prev) devkitARM libctrpf;
+        };
+      };
+    };
 }

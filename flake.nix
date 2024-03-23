@@ -93,6 +93,7 @@
       src = extractDocker libctrpf-img "/opt/devkitpro";
       nativeBuildInputs = [ pkgs.autoPatchelfHook ];
       buildInputs = with pkgs; [
+        stdenv.cc.cc
       ];
       buildPhase = "true";
       installPhase = ''

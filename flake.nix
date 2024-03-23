@@ -81,16 +81,15 @@
           "portlibs/nds"
         ];
       };
+
+      libctrpf = mkDevkit pkgs {
+        name = "libctrpf";
+        src = ./sources/libctrpf.json;
+        includePaths = [
+          "libctrpf/include"
+        ];
+      };
     };
-    packages = pkgs: {
-    libctrpf = mkDevkit pkgs {
-      name = "libctrpf";
-      src = ./sources/libctrpf.json;
-      includePaths = [
-        "libctrpf/include"
-      ];
-    };
-  };
   in
     (flake-utils.lib.eachDefaultSystem (system: let
       pkgs' = nixpkgs.legacyPackages.${system};

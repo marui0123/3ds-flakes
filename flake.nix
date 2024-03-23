@@ -101,7 +101,7 @@
     }))
     // {
       overlays.default = final: prev: {
-        ctr-flakes = {
+        ctr-flake = {
           inherit (packages prev) devkitARM libctrpf;
         };
       };

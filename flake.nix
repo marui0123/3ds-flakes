@@ -91,9 +91,8 @@
     packages.x86_64-linux.libctrpf = pkgs.stdenv.mkDerivation {
       name = "libctrpf";
       src = extractDocker libctrpf-img "/opt/devkitpro";
-      nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+      nativeBuildInputs = [  ];
       buildInputs = with pkgs; [
-        stdenv.cc.cc
       ];
       buildPhase = "true";
       installPhase = ''
